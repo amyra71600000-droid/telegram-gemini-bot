@@ -11,12 +11,8 @@ model = genai.GenerativeModel("gemini-1.5-flash")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
-
-    try:
-        response = model.generate_content(user_message)
-        await update.message.reply_text(response.text)
-    except Exception as e:
-        await update.message.reply_text("حدث خطأ، حاول مرة أخرى.")
+    response = model.generate_content(user_message)
+    await update.message.reply_text(response.text)
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
