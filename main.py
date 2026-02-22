@@ -1,14 +1,15 @@
 import os
-from google import genai
+import google.generativeai as genai
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-# قراءة المتغيرات من Railway
+# قراءة المتغيرات
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# إنشاء عميل Gemini
-client = genai.Client(api_key=GEMINI_API_KEY)
+# تفعيل Gemini
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel("gemini-1.5-flash")
 
 # أمر /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -19,10 +20,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
 
     try:
-        response = client.models.generate_content(
-            model="models/gemini-1.5-flash",
-            contents=user_message
-        )
+        response = model.generate_content(user_message)
 
         if response.text:
             await update.message.reply_text(response.text)
@@ -34,7 +32,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # تشغيل البوت
 app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
