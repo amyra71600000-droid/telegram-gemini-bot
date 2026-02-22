@@ -1,29 +1,29 @@
 import os
-from google import genai
+from openai import OpenAI
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 البوت يعمل بنجاح!\nأرسل أي رسالة.")
+    await update.message.reply_text("🎓 بوت دراسي جاهز!\nأرسل سؤالك.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        user_text = update.message.text
+    user_text = update.message.text
 
-        response = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=user_text
-        )
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "أنت مدرس ذكي تشرح الإجابات بطريقة واضحة ومبسطة."},
+            {"role": "user", "content": user_text}
+        ]
+    )
 
-        await update.message.reply_text(response.text)
-
-    except Exception as e:
-        await update.message.reply_text(f"حدث خطأ:\n{e}")
+    reply = response.choices[0].message.content
+    await update.message.reply_text(reply)
 
 app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
