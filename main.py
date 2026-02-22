@@ -18,18 +18,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # الرد على الرسائل
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
-    
+
     try:
         response = model.generate_content(user_message)
-        await update.message.reply_text(response.text)
+
+        if response and hasattr(response, "text") and response.text:
+            await update.message.reply_text(response.text)
+        else:
+            await update.message.reply_text("لم يتم استلام رد من جيميني")
+
     except Exception as e:
-        await update.message.reply_text("حدث خطأ في الاتصال بـ Gemini ❌")
-
-# تشغيل البوت
-app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-print("Bot is running...")
-app.run_polling()
+        await update.message.reply_text(f"حصل خطأ:\n{e}")
