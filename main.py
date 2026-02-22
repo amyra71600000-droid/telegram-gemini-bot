@@ -67,7 +67,7 @@ questions_bank = {
 }
 
 # =====================================
-# SESSION + SPAM
+# SESSION + ANTI SPAM
 # =====================================
 
 sessions = {}
@@ -79,7 +79,7 @@ def is_spam(user_id):
     times = [t for t in times if now - t < 5]
     times.append(now)
     spam_tracker[user_id] = times
-    return len(times) > 6
+    return len(times) > 5
 
 # =====================================
 # LEVEL SYSTEM
@@ -92,23 +92,26 @@ def get_level(xp):
         return "متوسط"
     elif xp < 300:
         return "متقدم"
+    elif xp < 600:
+        return "محترف"
     else:
         return "خبير"
 
 # =====================================
-# ANSWER CHECKER (Improved)
+# ANSWER CHECKER
 # =====================================
 
+def normalize(text):
+    return text.replace(" ", "").lower()
+
 def check_answer(user_input, correct_answer):
-    user_input = user_input.replace(" ", "")
-    correct_answer = correct_answer.replace(" ", "")
+    user_input = normalize(user_input)
+    correct_answer = normalize(correct_answer)
 
     if "," in correct_answer:
-        correct_set = set(correct_answer.split(","))
-        user_set = set(user_input.split(","))
-        return correct_set == user_set
+        return set(user_input.split(",")) == set(correct_answer.split(","))
 
-    return user_input.lower() == correct_answer.lower()
+    return user_input == correct_answer
 
 # =====================================
 # COMMANDS
@@ -119,23 +122,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
     await update.message.reply_text(
-        "🎓 منصة رياضيات السادس الإعدادي\nاختر فرعك:",
+        "🎓 منصة رياضيات السادس الإعدادي\nاختر فرعك للبدء:",
         reply_markup=markup
     )
-
-async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cursor.execute("SELECT user_id, xp FROM users ORDER BY xp DESC LIMIT 10")
-    top = cursor.fetchall()
-
-    if not top:
-        await update.message.reply_text("لا يوجد بيانات بعد.")
-        return
-
-    msg = "🏆 أفضل 10 طلاب:\n\n"
-    for i, (uid, xp) in enumerate(top, 1):
-        msg += f"{i}- ID:{uid} | XP: {xp}\n"
-
-    await update.message.reply_text(msg)
 
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -148,19 +137,29 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     xp, quizzes, correct = data
     level = get_level(xp)
-    accuracy = (correct / (quizzes * 5) * 100) if quizzes else 0
+    total_questions = quizzes * 5
+    accuracy = (correct / total_questions * 100) if total_questions else 0
 
     await update.message.reply_text(
-        f"📊 تقريرك:\n"
+        f"📊 ملفك:\n"
         f"XP: {xp}\n"
         f"المستوى: {level}\n"
-        f"عدد الاختبارات: {quizzes}\n"
-        f"نسبة النجاح: {accuracy:.1f}%"
+        f"الاختبارات: {quizzes}\n"
+        f"الدقة: {accuracy:.1f}%"
     )
+
+async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cursor.execute("SELECT user_id, xp FROM users ORDER BY xp DESC LIMIT 10")
+    top = cursor.fetchall()
+
+    msg = "🏆 أفضل 10 طلاب:\n\n"
+    for i, (uid, xp) in enumerate(top, 1):
+        msg += f"{i}- {uid} | {xp} XP\n"
+
+    await update.message.reply_text(msg)
 
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-
     cursor.execute("SELECT branch FROM users WHERE user_id=?", (user_id,))
     row = cursor.fetchone()
 
@@ -188,10 +187,10 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
     if is_spam(user_id):
-        await update.message.reply_text("🚫 يرجى عدم الإرسال المتكرر.")
+        await update.message.reply_text("🚫 تم إيقافك مؤقتاً بسبب الإرسال المتكرر.")
         return
 
-    # Branch selection
+    # Branch
     if text in ["🔬 علمي", "📖 أدبي"]:
         branch = "علمي" if "علمي" in text else "أدبي"
 
@@ -200,20 +199,22 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
 
         await update.message.reply_text(
-            f"تم اختيار {branch}\nاكتب /quiz لبدء اختبار\nاكتب سؤالك لشرح مباشر."
+            f"✅ تم اختيار {branch}\n"
+            "اكتب /quiz لبدء اختبار\n"
+            "أو اكتب سؤالك لشرح مباشر."
         )
         return
 
-    # Quiz Mode
+    # Quiz mode
     if user_id in sessions:
         session = sessions[user_id]
         q = session["questions"][session["index"]]
 
         if check_answer(text, q["a"]):
             session["score"] += 1
-            await update.message.reply_text("✅ صحيح (+10 XP)")
+            await update.message.reply_text("✅ إجابة صحيحة (+10 XP)")
         else:
-            await update.message.reply_text(f"❌ خطأ\nالإجابة الصحيحة: {q['a']}")
+            await update.message.reply_text(f"❌ خطأ\nالإجابة: {q['a']}")
 
         session["index"] += 1
 
@@ -226,6 +227,12 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             score = session["score"]
             xp_gain = score * 10
 
+            # Bonus XP
+            if score == 5:
+                xp_gain += 20
+            elif score >= 4:
+                xp_gain += 10
+
             cursor.execute("""
             UPDATE users
             SET xp = xp + ?,
@@ -236,21 +243,43 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
 
             await update.message.reply_text(
-                f"🎉 انتهى الاختبار\nنتيجتك: {score}/5\n+{xp_gain} XP"
+                f"🎉 انتهى الاختبار\n"
+                f"النتيجة: {score}/5\n"
+                f"+{xp_gain} XP"
             )
 
             sessions.pop(user_id)
 
         return
 
-    # AI MODE
+    # =====================================
+    # AI MODE (Dynamic System by Branch)
+    # =====================================
+
+    cursor.execute("SELECT branch FROM users WHERE user_id=?", (user_id,))
+    row = cursor.fetchone()
+    branch = row[0] if row else "علمي"
+
+    system_prompt = f"""
+أنت مدرس رياضيات عراقي متخصص بمنهج السادس الإعدادي - فرع {branch}.
+
+قواعد:
+- اكتب بالعربية الفصحى فقط.
+- اشرح خطوة بخطوة.
+- لا تكتب مقدمة طويلة.
+- استخدم مثال تطبيقي إذا لزم.
+- اجعل الشرح واضح ومختصر.
+- الحد الأقصى 250 كلمة.
+"""
+
     try:
         response = ai_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
-                {"role": "system", "content": "أجب كمدرس رياضيات عراقي للسادس الإعدادي واشرح خطوة بخطوة وبطريقة مبسطة."},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": text}
-            ]
+            ],
+            max_tokens=600
         )
 
         reply = response.choices[0].message.content
@@ -258,7 +287,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         print("AI ERROR:", e)
-        await update.message.reply_text("⚠️ خطأ في الاتصال بالذكاء الصناعي.")
+        await update.message.reply_text("⚠️ حدث خطأ في الاتصال.")
 
 # =====================================
 # RUN
