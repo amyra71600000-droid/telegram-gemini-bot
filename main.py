@@ -18,7 +18,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = client.chat.completions.create(
             model="llama3-8b-8192",
             messages=[
-                {"role": "system", "content": "أنت مدرس ذكي تشرح الإجابات خطوة بخطوة وبأسلوب مبسط."},
+                {"role": "system", "content": "أنت مدرس ذكي تشرح خطوة بخطوة وبأسلوب مبسط."},
                 {"role": "user", "content": user_text}
             ]
         )
@@ -27,7 +27,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(reply)
 
     except Exception as e:
-        await update.message.reply_text(f"حدث خطأ:\n{e}")
+        await update.message.reply_text(f"خطأ:\n{e}")
 
 app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
