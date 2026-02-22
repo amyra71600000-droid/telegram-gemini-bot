@@ -1,187 +1,244 @@
 import os
-import json
+import re
+import ast
 import random
-import telebot
-from flask import Flask, request
+import operator as op
 from groq import Groq
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# =========================
-# إعدادات
-# =========================
+==============================
 
-TOKEN = os.getenv("TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+متغيرات Railway
+
+==============================
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-bot = telebot.TeleBot(TOKEN)
-app = Flask(__name__)
+if not TELEGRAM_TOKEN:
+raise ValueError("TELEGRAM_TOKEN missing")
+
+if not GROQ_API_KEY:
+raise ValueError("GROQ_API_KEY missing")
+
 client = Groq(api_key=GROQ_API_KEY)
 
-DATA_FILE = "data.json"
+==============================
 
-# =========================
-# تحميل / حفظ البيانات
-# =========================
+بنك الأسئلة حسب المرحلة
 
-def load_data():
-    if not os.path.exists(DATA_FILE):
-        return {}
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+==============================
 
-def save_data(data):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-users = load_data()
-
-# =========================
-# بنك الأسئلة حسب المرحلة
-# =========================
-
-question_bank = {
-    "السادس ابتدائي": [
-        ("كم يساوي 5 + 7؟", "12"),
-        ("كم يساوي 9 × 3؟", "27"),
-        ("ما هو ناتج 20 ÷ 4؟", "5"),
-    ],
-    "الثالث متوسط": [
-        ("حل المعادلة: 2x + 4 = 10", "3"),
-        ("بسّط: 3(2+4)", "18"),
-        ("كم يساوي 6^2؟", "36"),
-    ],
-    "السادس الإعدادي": [
-        ("ما مشتقة x^2؟", "2x"),
-        ("حل المعادلة: x^2 = 16", "4"),
-        ("كم يساوي sin(90)؟", "1"),
-    ]
+questions_bank = {
+"السادس ابتدائي": [
+{"question": "كم يساوي 5 × 6؟", "answer": "30"},
+{"question": "احسب: 12 ÷ 3", "answer": "4"},
+{"question": "كم يساوي 7 + 8؟", "answer": "15"},
+{"question": "ما هو مربع العدد 4؟", "answer": "16"},
+{"question": "احسب: 9 - 3", "answer": "6"},
+],
+"الثالث متوسط": [
+{"question": "حل المعادلة: 2x + 4 = 10", "answer": "3"},
+{"question": "حل المعادلة: 3x = 15", "answer": "5"},
+{"question": "بسّط: 3(2 + 4)", "answer": "18"},
+{"question": "حل المعادلة: x - 7 = 3", "answer": "10"},
+{"question": "كم يساوي 5^2؟", "answer": "25"},
+],
+"السادس الإعدادي": [
+{"question": "اشتق: x^2", "answer": "2x"},
+{"question": "تكامل: 2x dx", "answer": "x^2"},
+{"question": "حل: x^2 - 9 = 0", "answer": "3,-3"},
+{"question": "إذا كان sin 30° = ؟", "answer": "0.5"},
+{"question": "حل المعادلة: 2x - 4 = 0", "answer": "2"},
+]
 }
 
-# =========================
-# /start
-# =========================
+user_sessions = {}
+user_grades = {}
 
-@bot.message_handler(commands=['start'])
-def start(message):
-    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("السادس ابتدائي", "الثالث متوسط", "السادس الإعدادي")
-    bot.send_message(message.chat.id, "📚 اختر مرحلتك:", reply_markup=markup)
+==============================
 
-# =========================
-# اختيار المرحلة
-# =========================
+نظام حل العمليات الحسابية
 
-@bot.message_handler(func=lambda m: m.text in question_bank.keys())
-def choose_level(message):
-    users[str(message.chat.id)] = {
-        "level": message.text,
-        "score": 0,
-        "question_index": 0,
-        "premium": False
-    }
-    save_data(users)
-    bot.send_message(message.chat.id, f"✅ تم اختيار {message.text}\nاكتب /quiz لبدء الاختبار")
+==============================
 
-# =========================
-# بدء اختبار
-# =========================
+allowed_operators = {
+ast.Add: op.add,
+ast.Sub: op.sub,
+ast.Mult: op.mul,
+ast.Div: op.truediv,
+ast.Pow: op.pow,
+}
 
-@bot.message_handler(commands=['quiz'])
-def quiz(message):
-    user_id = str(message.chat.id)
-    
-    if user_id not in users:
-        bot.send_message(message.chat.id, "اختر مرحلتك أولاً باستخدام /start")
-        return
-    
-    users[user_id]["score"] = 0
-    users[user_id]["question_index"] = 0
-    save_data(users)
-    
-    send_question(message.chat.id)
+def eval_expr(expr):
+def eval_(node):
+if isinstance(node, ast.Num):
+return node.n
+elif isinstance(node, ast.BinOp):
+return allowed_operators[type(node.op)](
+eval_(node.left),
+eval_(node.right)
+)
+else:
+raise TypeError("عملية غير مدعومة")
 
-def send_question(chat_id):
-    user_id = str(chat_id)
-    level = users[user_id]["level"]
-    questions = question_bank[level]
-    
-    if users[user_id]["question_index"] >= 5:
-        finish_quiz(chat_id)
-        return
-    
-    question = random.choice(questions)
-    users[user_id]["current_answer"] = question[1]
-    users[user_id]["question_index"] += 1
-    save_data(users)
-    
-    bot.send_message(chat_id, f"📘 السؤال {users[user_id]['question_index']}:\n{question[0]}")
+node = ast.parse(expr, mode='eval').body  
+return eval_(node)
 
-def finish_quiz(chat_id):
-    user_id = str(chat_id)
-    score = users[user_id]["score"]
-    
-    rating = "👑 ممتاز" if score >= 4 else "👍 جيد" if score >= 2 else "📚 يحتاج مراجعة"
-    
-    bot.send_message(chat_id, f"🏁 انتهى الاختبار\n📊 نتيجتك: {score}/5\n{rating}")
-    save_data(users)
+def is_math(text):
+return bool(re.fullmatch(r"[0-9.+-*/^ ]+", text))
 
-# =========================
-# الذكاء الصناعي (مدرس)
-# =========================
+==============================
 
-def ask_ai(question, level):
-    response = client.chat.completions.create(
-        model="llama3-70b-8192",
-        messages=[
-            {"role": "system", "content": f"أجب كمدرس رياضيات للمرحلة {level} فقط. لا تجب عن أي موضوع خارج الرياضيات."},
-            {"role": "user", "content": question}
-        ]
-    )
-    return response.choices[0].message.content
+أوامر البوت
 
-# =========================
-# استقبال الرسائل
-# =========================
+==============================
 
-@bot.message_handler(func=lambda m: True)
-def handle_message(message):
-    user_id = str(message.chat.id)
-    
-    if user_id in users and "current_answer" in users[user_id]:
-        if message.text.strip() == users[user_id]["current_answer"]:
-            users[user_id]["score"] += 1
-            bot.send_message(message.chat.id, "✅ إجابة صحيحة")
-        else:
-            bot.send_message(message.chat.id, f"❌ خطأ\nالإجابة الصحيحة: {users[user_id]['current_answer']}")
-        
-        save_data(users)
-        send_question(message.chat.id)
-        return
-    
-    # مدرس الذكاء الصناعي
-    if user_id in users:
-        try:
-            reply = ask_ai(message.text, users[user_id]["level"])
-            bot.send_message(message.chat.id, reply)
-        except:
-            bot.send_message(message.chat.id, "⚠ حدث خطأ في المعالجة")
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+keyboard = [
+["السادس ابتدائي"],
+["الثالث متوسط"],
+["السادس الإعدادي"]
+]
 
-# =========================
-# Webhook Railway
-# =========================
+reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)  
 
-@app.route(f"/{TOKEN}", methods=["POST"])
-def webhook():
-    json_str = request.get_data().decode("UTF-8")
-    update = telebot.types.Update.de_json(json_str)
-    bot.process_new_updates([update])
-    return "OK", 200
+await update.message.reply_text(  
+    "📚 أهلاً بك في منصة الرياضيات!\n\nاختر مرحلتك الدراسية:",  
+    reply_markup=reply_markup  
+)
 
-@app.route("/")
-def home():
-    return "Bot Running"
+async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+user_id = update.message.from_user.id
 
-if __name__ == "__main__":
-    bot.remove_webhook()
-    bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+if user_id not in user_grades:  
+    await update.message.reply_text("⚠ اختر مرحلتك أولاً باستخدام /start")  
+    return  
+
+grade = user_grades[user_id]  
+selected_questions = random.sample(questions_bank[grade], 5)  
+
+user_sessions[user_id] = {  
+    "questions": selected_questions,  
+    "current": 0,  
+    "score": 0  
+}  
+
+await update.message.reply_text(  
+    f"📘 السؤال 1 من 5:\n{selected_questions[0]['question']}"  
+)
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+user_text = update.message.text.strip()
+user_id = update.message.from_user.id
+
+# ==========================  
+# حفظ المرحلة  
+# ==========================  
+if user_text in questions_bank:  
+    user_grades[user_id] = user_text  
+    await update.message.reply_text(  
+        f"✅ تم اختيار {user_text}\nاكتب /quiz لبدء الاختبار."  
+    )  
+    return  
+
+# ==========================  
+# نظام الاختبار  
+# ==========================  
+if user_id in user_sessions:  
+    session = user_sessions[user_id]  
+    current_index = session["current"]  
+    correct_answer = session["questions"][current_index]["answer"]  
+
+    if user_text.lower() == correct_answer.lower():  
+        session["score"] += 1  
+        await update.message.reply_text("✅ إجابة صحيحة!")  
+    else:  
+        await update.message.reply_text(  
+            f"❌ إجابة خاطئة.\nالإجابة الصحيحة: {correct_answer}"  
+        )  
+
+    session["current"] += 1  
+
+    if session["current"] < 5:  
+        next_question = session["questions"][session["current"]]["question"]  
+        await update.message.reply_text(  
+            f"📘 السؤال {session['current'] + 1} من 5:\n{next_question}"  
+        )  
+    else:  
+        final_score = session["score"]  
+
+        if final_score == 5:  
+            rating = "👑 ممتاز جداً"  
+            advice = "أداء رائع! استمر هكذا."  
+        elif final_score == 4:  
+            rating = "⭐ جيد جداً"  
+            advice = "قريب من الكمال!"  
+        elif final_score == 3:  
+            rating = "👍 جيد"  
+            advice = "مستوى جيد لكن تحتاج مراجعة."  
+        elif final_score == 2:  
+            rating = "📚 يحتاج تحسين"  
+            advice = "راجع الدروس الأساسية."  
+        else:  
+            rating = "⚠ ضعيف"  
+            advice = "أعد دراسة الفصل ثم أعد الاختبار."  
+
+        await update.message.reply_text(  
+            f"🎓 انتهى الاختبار!\n\n"  
+            f"📊 نتيجتك: {final_score} من 5\n"  
+            f"{rating}\n"  
+            f"💡 {advice}"  
+        )  
+
+        del user_sessions[user_id]  
+
+    return  
+
+# ==========================  
+# حل العمليات الحسابية  
+# ==========================  
+if is_math(user_text):  
+    try:  
+        expression = user_text.replace("^", "**")  
+        result = eval_expr(expression)  
+        await update.message.reply_text(f"📐 النتيجة: {result}")  
+        return  
+    except:  
+        pass  
+
+# ==========================  
+# ذكاء صناعي حسب المرحلة  
+# ==========================  
+try:  
+    grade = user_grades.get(user_id, "الثالث متوسط")  
+
+    response = client.chat.completions.create(  
+        model="llama3-70b-8192",  
+        messages=[  
+            {"role": "system", "content": f"أجب كمدرس رياضيات لمرحلة {grade} بشكل واضح ومختصر."},  
+            {"role": "user", "content": user_text}  
+        ]  
+    )  
+
+    reply = response.choices[0].message.content  
+    await update.message.reply_text(reply)  
+
+except:  
+    await update.message.reply_text("حدث خطأ أثناء المعالجة.")
+
+==============================
+
+تشغيل البوت
+
+==============================
+
+app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("quiz", quiz))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+print("البوت يعمل...")
+app.run_polling()
