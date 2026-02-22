@@ -13,7 +13,7 @@ from telegram.ext import (
 )
 
 # =====================================
-# Environment Variables
+# ENV VARIABLES
 # =====================================
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -28,7 +28,7 @@ if not GROQ_API_KEY:
 ai_client = Groq(api_key=GROQ_API_KEY)
 
 # =====================================
-# Database Setup (Expandable Structure)
+# DATABASE
 # =====================================
 
 conn = sqlite3.connect("database.db", check_same_thread=False)
@@ -43,11 +43,10 @@ CREATE TABLE IF NOT EXISTS users (
     correct_answers INTEGER DEFAULT 0
 )
 """)
-
 conn.commit()
 
 # =====================================
-# Question Bank
+# QUESTIONS
 # =====================================
 
 questions_bank = {
@@ -68,15 +67,11 @@ questions_bank = {
 }
 
 # =====================================
-# Session Management
+# SESSION + SPAM
 # =====================================
 
 sessions = {}
 spam_tracker = {}
-
-# =====================================
-# Anti-Spam
-# =====================================
 
 def is_spam(user_id):
     now = time.time()
@@ -87,7 +82,7 @@ def is_spam(user_id):
     return len(times) > 6
 
 # =====================================
-# Levels System
+# LEVEL SYSTEM
 # =====================================
 
 def get_level(xp):
@@ -101,16 +96,27 @@ def get_level(xp):
         return "خبير"
 
 # =====================================
-# Commands
+# ANSWER CHECKER (Improved)
+# =====================================
+
+def check_answer(user_input, correct_answer):
+    user_input = user_input.replace(" ", "")
+    correct_answer = correct_answer.replace(" ", "")
+
+    if "," in correct_answer:
+        correct_set = set(correct_answer.split(","))
+        user_set = set(user_input.split(","))
+        return correct_set == user_set
+
+    return user_input.lower() == correct_answer.lower()
+
+# =====================================
+# COMMANDS
 # =====================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-
     keyboard = [["🔬 علمي"], ["📖 أدبي"]]
     markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-
-    sessions.pop(user_id, None)
 
     await update.message.reply_text(
         "🎓 منصة رياضيات السادس الإعدادي\nاختر فرعك:",
@@ -174,7 +180,7 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"📘 السؤال 1:\n{questions[0]['q']}")
 
 # =====================================
-# Main Message Handler
+# MAIN HANDLER
 # =====================================
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -185,9 +191,10 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🚫 يرجى عدم الإرسال المتكرر.")
         return
 
-    # Branch Selection
+    # Branch selection
     if text in ["🔬 علمي", "📖 أدبي"]:
         branch = "علمي" if "علمي" in text else "أدبي"
+
         cursor.execute("INSERT OR IGNORE INTO users (user_id, branch) VALUES (?,?)", (user_id, branch))
         cursor.execute("UPDATE users SET branch=? WHERE user_id=?", (branch, user_id))
         conn.commit()
@@ -202,11 +209,11 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         session = sessions[user_id]
         q = session["questions"][session["index"]]
 
-        if text.lower() == q["a"].lower():
+        if check_answer(text, q["a"]):
             session["score"] += 1
             await update.message.reply_text("✅ صحيح (+10 XP)")
         else:
-            await update.message.reply_text(f"❌ خطأ\nالإجابة: {q['a']}")
+            await update.message.reply_text(f"❌ خطأ\nالإجابة الصحيحة: {q['a']}")
 
         session["index"] += 1
 
@@ -228,26 +235,33 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             """, (xp_gain, score, user_id))
             conn.commit()
 
-            await update.message.reply_text(f"🎉 انتهى الاختبار\nنتيجتك: {score}/5\n+{xp_gain} XP")
+            await update.message.reply_text(
+                f"🎉 انتهى الاختبار\nنتيجتك: {score}/5\n+{xp_gain} XP"
+            )
+
             sessions.pop(user_id)
 
         return
 
-    # AI Mode
+    # AI MODE
     try:
         response = ai_client.chat.completions.create(
             model="llama3-8b-8192",
             messages=[
-                {"role": "system", "content": "أجب كمدرس رياضيات عراقي للسادس الإعدادي."},
+                {"role": "system", "content": "أجب كمدرس رياضيات عراقي للسادس الإعدادي واشرح خطوة بخطوة وبطريقة مبسطة."},
                 {"role": "user", "content": text}
             ]
         )
-        await update.message.reply_text(response.choices[0].message.content)
-    except:
-        await update.message.reply_text("حدث خطأ في الذكاء الصناعي.")
+
+        reply = response.choices[0].message.content
+        await update.message.reply_text(reply)
+
+    except Exception as e:
+        print("AI ERROR:", e)
+        await update.message.reply_text("⚠️ خطأ في الاتصال بالذكاء الصناعي.")
 
 # =====================================
-# Run App
+# RUN
 # =====================================
 
 app = ApplicationBuilder().token(TOKEN).build()
