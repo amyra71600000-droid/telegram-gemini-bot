@@ -124,11 +124,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📘 السؤال {session['current'] + 1} من 5:\n{next_question}"
             )
         else:
-            final_score = session["score"]
-            await update.message.reply_text(
-                f"🎓 انتهى الاختبار!\nنتيجتك: {final_score} / 5"
-            )
-            del user_sessions[user_id]
+    final_score = session["score"]
+
+    # تحديد التقييم
+    if final_score == 5:
+        rating = "👑 ممتاز جداً"
+        advice = "أداء رائع! استمر هكذا."
+    elif final_score == 4:
+        rating = "⭐ جيد جداً"
+        advice = "قريب من الكمال! راجع الأخطاء البسيطة."
+    elif final_score == 3:
+        rating = "👍 جيد"
+        advice = "مستوى جيد، لكن تحتاج مراجعة بعض الدروس."
+    elif final_score == 2:
+        rating = "📚 يحتاج تحسين"
+        advice = "راجع أساسيات المادة وحاول مرة أخرى."
+    else:
+        rating = "⚠ ضعيف"
+        advice = "ننصحك بإعادة دراسة الفصل ثم إعادة الاختبار."
+
+    await update.message.reply_text(
+        f"🎓 انتهى الاختبار!\n\n"
+        f"📊 نتيجتك: {final_score} من 5\n"
+        f"{rating}\n"
+        f"💡 {advice}"
+    )
+
+    del user_sessions[user_id]
 
         return
 
