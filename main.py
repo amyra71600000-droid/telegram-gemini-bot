@@ -18,7 +18,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
-                {"role": "system", "content": "أنت مدرس ذكي تشرح خطوة بخطوة وبأسلوب مبسط."},
+                {"role": "system", "content": 
+"أنت مدرس تاريخ دقيق جداً. 
+لا تخمّن أبداً. 
+إذا لم تكن متأكد من معلومة قل لا أعلم. 
+اكتب التواريخ بشكل صحيح (سنة الولادة ثم سنة الوفاة). 
+أعطِ معلومات مؤكدة فقط."},
                 {"role": "user", "content": user_text}
             ]
         )
