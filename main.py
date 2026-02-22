@@ -4,7 +4,7 @@ import ast
 import random
 import operator as op
 from groq import Groq
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
 # ==============================
@@ -23,19 +23,35 @@ if not GROQ_API_KEY:
 client = Groq(api_key=GROQ_API_KEY)
 
 # ==============================
-# بنك الأسئلة
+# بنك الأسئلة حسب المرحلة
 # ==============================
 
-questions_bank = [
-    {"question": "حل المعادلة: 2x + 4 = 10", "answer": "3"},
-    {"question": "حل المعادلة: 3x = 15", "answer": "5"},
-    {"question": "إذا كان محيط المربع 20 فما طول الضلع؟", "answer": "5"},
-    {"question": "بسّط: 3(2 + 4)", "answer": "18"},
-    {"question": "حل المعادلة: x - 7 = 3", "answer": "10"},
-    {"question": "كم يساوي 5^2؟", "answer": "25"},
-]
+questions_bank = {
+    "السادس ابتدائي": [
+        {"question": "كم يساوي 5 × 6؟", "answer": "30"},
+        {"question": "احسب: 12 ÷ 3", "answer": "4"},
+        {"question": "كم يساوي 7 + 8؟", "answer": "15"},
+        {"question": "ما هو مربع العدد 4؟", "answer": "16"},
+        {"question": "احسب: 9 - 3", "answer": "6"},
+    ],
+    "الثالث متوسط": [
+        {"question": "حل المعادلة: 2x + 4 = 10", "answer": "3"},
+        {"question": "حل المعادلة: 3x = 15", "answer": "5"},
+        {"question": "بسّط: 3(2 + 4)", "answer": "18"},
+        {"question": "حل المعادلة: x - 7 = 3", "answer": "10"},
+        {"question": "كم يساوي 5^2؟", "answer": "25"},
+    ],
+    "السادس الإعدادي": [
+        {"question": "اشتق: x^2", "answer": "2x"},
+        {"question": "تكامل: 2x dx", "answer": "x^2"},
+        {"question": "حل: x^2 - 9 = 0", "answer": "3,-3"},
+        {"question": "إذا كان sin 30° = ؟", "answer": "0.5"},
+        {"question": "حل المعادلة: 2x - 4 = 0", "answer": "2"},
+    ]
+}
 
 user_sessions = {}
+user_grades = {}
 
 # ==============================
 # نظام حل العمليات الحسابية
@@ -72,17 +88,28 @@ def is_math(text):
 # ==============================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        ["السادس ابتدائي"],
+        ["الثالث متوسط"],
+        ["السادس الإعدادي"]
+    ]
+
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
     await update.message.reply_text(
-        "🤖 البوت الدراسي جاهز!\n\n"
-        "يمكنك:\n"
-        "• حل مسائل رياضيات (مثال: 2+3*5)\n"
-        "• كتابة /quiz لبدء اختبار"
+        "📚 أهلاً بك في منصة الرياضيات!\n\nاختر مرحلتك الدراسية:",
+        reply_markup=reply_markup
     )
 
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
 
-    selected_questions = random.sample(questions_bank, 5)
+    if user_id not in user_grades:
+        await update.message.reply_text("⚠ اختر مرحلتك أولاً باستخدام /start")
+        return
+
+    grade = user_grades[user_id]
+    selected_questions = random.sample(questions_bank[grade], 5)
 
     user_sessions[user_id] = {
         "questions": selected_questions,
@@ -90,15 +117,23 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "score": 0
     }
 
-    first_question = selected_questions[0]["question"]
-
     await update.message.reply_text(
-        f"📘 السؤال 1 من 5:\n{first_question}"
+        f"📘 السؤال 1 من 5:\n{selected_questions[0]['question']}"
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text.strip()
     user_id = update.message.from_user.id
+
+    # ==========================
+    # حفظ المرحلة
+    # ==========================
+    if user_text in questions_bank:
+        user_grades[user_id] = user_text
+        await update.message.reply_text(
+            f"✅ تم اختيار {user_text}\nاكتب /quiz لبدء الاختبار."
+        )
+        return
 
     # ==========================
     # نظام الاختبار
@@ -124,33 +159,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📘 السؤال {session['current'] + 1} من 5:\n{next_question}"
             )
         else:
-    final_score = session["score"]
+            final_score = session["score"]
 
-    # تحديد التقييم
-    if final_score == 5:
-        rating = "👑 ممتاز جداً"
-        advice = "أداء رائع! استمر هكذا."
-    elif final_score == 4:
-        rating = "⭐ جيد جداً"
-        advice = "قريب من الكمال! راجع الأخطاء البسيطة."
-    elif final_score == 3:
-        rating = "👍 جيد"
-        advice = "مستوى جيد، لكن تحتاج مراجعة بعض الدروس."
-    elif final_score == 2:
-        rating = "📚 يحتاج تحسين"
-        advice = "راجع أساسيات المادة وحاول مرة أخرى."
-    else:
-        rating = "⚠ ضعيف"
-        advice = "ننصحك بإعادة دراسة الفصل ثم إعادة الاختبار."
+            if final_score == 5:
+                rating = "👑 ممتاز جداً"
+                advice = "أداء رائع! استمر هكذا."
+            elif final_score == 4:
+                rating = "⭐ جيد جداً"
+                advice = "قريب من الكمال!"
+            elif final_score == 3:
+                rating = "👍 جيد"
+                advice = "مستوى جيد لكن تحتاج مراجعة."
+            elif final_score == 2:
+                rating = "📚 يحتاج تحسين"
+                advice = "راجع الدروس الأساسية."
+            else:
+                rating = "⚠ ضعيف"
+                advice = "أعد دراسة الفصل ثم أعد الاختبار."
 
-    await update.message.reply_text(
-        f"🎓 انتهى الاختبار!\n\n"
-        f"📊 نتيجتك: {final_score} من 5\n"
-        f"{rating}\n"
-        f"💡 {advice}"
-    )
+            await update.message.reply_text(
+                f"🎓 انتهى الاختبار!\n\n"
+                f"📊 نتيجتك: {final_score} من 5\n"
+                f"{rating}\n"
+                f"💡 {advice}"
+            )
 
-    del user_sessions[user_id]
+            del user_sessions[user_id]
 
         return
 
@@ -167,13 +201,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     # ==========================
-    # ذكاء صناعي للأسئلة النظرية
+    # ذكاء صناعي حسب المرحلة
     # ==========================
     try:
+        grade = user_grades.get(user_id, "الثالث متوسط")
+
         response = client.chat.completions.create(
             model="llama3-70b-8192",
             messages=[
-                {"role": "system", "content": "أجب كمدرس للصف الثالث متوسط بشكل واضح ومختصر."},
+                {"role": "system", "content": f"أجب كمدرس رياضيات لمرحلة {grade} بشكل واضح ومختصر."},
                 {"role": "user", "content": user_text}
             ]
         )
@@ -181,8 +217,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply = response.choices[0].message.content
         await update.message.reply_text(reply)
 
-    except Exception as e:
-        await update.message.reply_text("حصل خطأ في المعالجة.")
+    except:
+        await update.message.reply_text("حدث خطأ أثناء المعالجة.")
 
 # ==============================
 # تشغيل البوت
