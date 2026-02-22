@@ -1,4 +1,5 @@
 import os
+import asyncio
 import google.generativeai as genai
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
@@ -14,11 +15,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     response = model.generate_content(user_message)
     await update.message.reply_text(response.text)
 
-def main():
+async def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print("Bot is running...")
-    app.run_polling()
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
