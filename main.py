@@ -1,15 +1,17 @@
 import os
 import re
 import ast
+import sqlite3
 import random
+import time
 import operator as op
 from groq import Groq
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# ==============================
+# ===============================
 # متغيرات Railway
-# ==============================
+# ===============================
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -22,9 +24,27 @@ if not GROQ_API_KEY:
 
 client = Groq(api_key=GROQ_API_KEY)
 
-# ==============================
+# ===============================
+# قاعدة البيانات SQLite
+# ===============================
+
+conn = sqlite3.connect("students.db")
+cursor = conn.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    grade TEXT,
+    total_quizzes INTEGER DEFAULT 0,
+    total_score INTEGER DEFAULT 0,
+    best_score INTEGER DEFAULT 0
+)
+""")
+conn.commit()
+
+# ===============================
 # بنك الأسئلة
-# ==============================
+# ===============================
 
 questions_bank = {
     "السادس ابتدائي": [
@@ -51,11 +71,23 @@ questions_bank = {
 }
 
 user_sessions = {}
-user_grades = {}
+user_message_times = {}
 
-# ==============================
-# نظام حل العمليات
-# ==============================
+# ===============================
+# حماية سبام
+# ===============================
+
+def is_spamming(user_id):
+    now = time.time()
+    times = user_message_times.get(user_id, [])
+    times = [t for t in times if now - t < 5]
+    times.append(now)
+    user_message_times[user_id] = times
+    return len(times) > 5
+
+# ===============================
+# نظام العمليات الحسابية
+# ===============================
 
 allowed_operators = {
     ast.Add: op.add,
@@ -75,17 +107,16 @@ def eval_expr(expr):
                 eval_(node.right)
             )
         else:
-            raise TypeError("عملية غير مدعومة")
-
+            raise TypeError
     node = ast.parse(expr, mode='eval').body
     return eval_(node)
 
 def is_math(text):
-    return bool(re.fullmatch(r"[0-9\.\+\-\*\/\(\)\^ ]+", text))
+    return bool(re.fullmatch(r"[0-9.+\-*/^ ]+", text))
 
-# ==============================
-# أوامر البوت
-# ==============================
+# ===============================
+# الأوامر
+# ===============================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -93,130 +124,149 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ["الثالث متوسط"],
         ["السادس الإعدادي"]
     ]
-
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
     await update.message.reply_text(
-        "📚 أهلاً بك في منصة الرياضيات!\n\nاختر مرحلتك الدراسية:",
+        "📚 أهلاً بك في منصة الرياضيات!\nاختر مرحلتك:",
         reply_markup=reply_markup
+    )
+
+async def mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    cursor.execute("SELECT total_quizzes, total_score, best_score FROM users WHERE user_id=?",(user_id,))
+    data = cursor.fetchone()
+
+    if not data:
+        await update.message.reply_text("📊 لا توجد بيانات بعد. ابدأ اختباراً أولاً.")
+        return
+
+    total_quizzes, total_score, best_score = data
+    avg = total_score / total_quizzes if total_quizzes else 0
+
+    await update.message.reply_text(
+        f"📊 إحصائياتك:\n\n"
+        f"عدد الاختبارات: {total_quizzes}\n"
+        f"أفضل نتيجة: {best_score}/5\n"
+        f"متوسط الأداء: {avg:.2f}"
     )
 
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
 
-    if user_id not in user_grades:
-        await update.message.reply_text("⚠ اختر مرحلتك أولاً باستخدام /start")
+    cursor.execute("SELECT grade FROM users WHERE user_id=?", (user_id,))
+    row = cursor.fetchone()
+
+    if not row:
+        await update.message.reply_text("⚠ اختر مرحلتك أولاً.")
         return
 
-    grade = user_grades[user_id]
-    selected_questions = random.sample(questions_bank[grade], 5)
+    grade = row[0]
+    selected = random.sample(questions_bank[grade], 5)
 
     user_sessions[user_id] = {
-        "questions": selected_questions,
+        "questions": selected,
         "current": 0,
         "score": 0
     }
 
-    await update.message.reply_text(
-        f"📘 السؤال 1 من 5:\n{selected_questions[0]['question']}"
-    )
+    await update.message.reply_text(f"📘 السؤال 1:\n{selected[0]['question']}")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_text = update.message.text.strip()
     user_id = update.message.from_user.id
+    text = update.message.text.strip()
 
-    # حفظ المرحلة
-    if user_text in questions_bank:
-        user_grades[user_id] = user_text
-        await update.message.reply_text(
-            f"✅ تم اختيار {user_text}\nاكتب /quiz لبدء الاختبار."
-        )
+    if is_spamming(user_id):
+        await update.message.reply_text("🚫 تم إيقافك مؤقتاً بسبب الإرسال المتكرر.")
         return
 
-    # نظام الاختبار
+    # اختيار مرحلة
+    if text in questions_bank:
+        cursor.execute("INSERT OR IGNORE INTO users (user_id, grade) VALUES (?,?)",(user_id,text))
+        cursor.execute("UPDATE users SET grade=? WHERE user_id=?",(text,user_id))
+        conn.commit()
+        await update.message.reply_text(f"✅ تم اختيار {text}\nاكتب /quiz للبدء.")
+        return
+
+    # جلسة اختبار
     if user_id in user_sessions:
         session = user_sessions[user_id]
-        current_index = session["current"]
-        correct_answer = session["questions"][current_index]["answer"]
+        q = session["questions"][session["current"]]
+        correct = q["answer"]
 
-        if user_text.lower() == correct_answer.lower():
+        if text.lower() == correct.lower():
             session["score"] += 1
-            await update.message.reply_text("✅ إجابة صحيحة!")
+            await update.message.reply_text("✅ صحيح")
         else:
-            await update.message.reply_text(
-                f"❌ إجابة خاطئة.\nالإجابة الصحيحة: {correct_answer}"
-            )
+            await update.message.reply_text(f"❌ خطأ\nالإجابة: {correct}")
+
+            # شرح ذكي
+            try:
+                explanation = client.chat.completions.create(
+                    model="llama3-70b-8192",
+                    messages=[
+                        {"role":"system","content":"اشرح الحل بشكل مختصر وبسيط."},
+                        {"role":"user","content":q["question"]}
+                    ]
+                )
+                await update.message.reply_text("🧠 شرح:\n"+explanation.choices[0].message.content)
+            except:
+                pass
 
         session["current"] += 1
 
         if session["current"] < 5:
-            next_question = session["questions"][session["current"]]["question"]
             await update.message.reply_text(
-                f"📘 السؤال {session['current'] + 1} من 5:\n{next_question}"
+                f"📘 السؤال {session['current']+1}:\n"
+                f"{session['questions'][session['current']]['question']}"
             )
         else:
-            final_score = session["score"]
+            score = session["score"]
 
-            ratings = {
-                5: ("👑 ممتاز جداً", "أداء رائع! استمر هكذا."),
-                4: ("⭐ جيد جداً", "قريب من الكمال!"),
-                3: ("👍 جيد", "مستوى جيد لكن تحتاج مراجعة."),
-                2: ("📚 يحتاج تحسين", "راجع الدروس الأساسية."),
-            }
+            cursor.execute("""
+            UPDATE users
+            SET total_quizzes = total_quizzes + 1,
+                total_score = total_score + ?,
+                best_score = MAX(best_score, ?)
+            WHERE user_id=?
+            """,(score,score,user_id))
+            conn.commit()
 
-            rating, advice = ratings.get(
-                final_score,
-                ("⚠ ضعيف", "أعد دراسة الفصل ثم أعد الاختبار.")
-            )
-
-            await update.message.reply_text(
-                f"🎓 انتهى الاختبار!\n\n"
-                f"📊 نتيجتك: {final_score} من 5\n"
-                f"{rating}\n"
-                f"💡 {advice}"
-            )
-
+            await update.message.reply_text(f"🎓 انتهى الاختبار\nنتيجتك: {score}/5\nاكتب /mystats لرؤية مستواك.")
             del user_sessions[user_id]
-
         return
 
-    # حل العمليات
-    if is_math(user_text):
+    # عمليات حسابية
+    if is_math(text):
         try:
-            expression = user_text.replace("^", "**")
-            result = eval_expr(expression)
+            result = eval_expr(text.replace("^","**"))
             await update.message.reply_text(f"📐 النتيجة: {result}")
             return
         except:
             pass
 
-    # ذكاء صناعي
+    # ذكاء صناعي عام
     try:
-        grade = user_grades.get(user_id, "الثالث متوسط")
-
         response = client.chat.completions.create(
             model="llama3-70b-8192",
             messages=[
-                {"role": "system", "content": f"أجب كمدرس رياضيات لمرحلة {grade} بشكل واضح ومختصر."},
-                {"role": "user", "content": user_text}
+                {"role":"system","content":"أجب كمدرس رياضيات بشكل واضح."},
+                {"role":"user","content":text}
             ]
         )
+        await update.message.reply_text(response.choices[0].message.content)
+    except:
+        await update.message.reply_text("حدث خطأ.")
 
-        reply = response.choices[0].message.content
-        await update.message.reply_text(reply)
-
-    except Exception as e:
-        await update.message.reply_text("حدث خطأ أثناء المعالجة.")
-
-# ==============================
-# تشغيل البوت
-# ==============================
+# ===============================
+# تشغيل
+# ===============================
 
 app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("quiz", quiz))
+app.add_handler(CommandHandler("mystats", mystats))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-print("البوت يعمل...")
+print("البوت الاحترافي يعمل...")
 app.run_polling()
