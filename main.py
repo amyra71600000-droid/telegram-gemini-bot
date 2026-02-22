@@ -5,13 +5,7 @@ import time
 import re
 from groq import Groq
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
 # ==============================
 # ENV
@@ -61,9 +55,9 @@ questions_bank = {
     "أدبي": [
         {"q": "احسب 15% من 200", "a": "30"},
         {"q": "حل 3س = 12", "a": "4"},
-        {"q": "احسب 8 + 9", "a": "17"},
         {"q": "احسب 45 ÷ 5", "a": "9"},
         {"q": "حل س - 7 = 2", "a": "9"},
+        {"q": "احسب 8 + 9", "a": "17"},
     ]
 }
 
@@ -75,35 +69,20 @@ def contains_latin(text):
     return re.search(r"[A-Za-z]", text) is not None
 
 def clean_text(text):
-    text = re.sub(r"[A-Za-z]", "", text)
-    return text.strip()
+    return re.sub(r"[A-Za-z]", "", text)
 
-def normalize(text):
-    return text.replace(" ", "").lower()
-
-def check_answer(user_input, correct_answer):
-    user_input = normalize(user_input)
-    correct_answer = normalize(correct_answer)
-
-    if "," in correct_answer:
-        return set(user_input.split(",")) == set(correct_answer.split(","))
-
-    return user_input == correct_answer
-
-def get_level(xp):
-    if xp < 50:
-        return "مبتدئ"
-    elif xp < 150:
-        return "متوسط"
-    elif xp < 300:
-        return "متقدم"
-    elif xp < 600:
-        return "محترف"
-    else:
-        return "خبير"
+def detect_mode(text):
+    text = text.strip()
+    if "اشرح" in text:
+        return "شرح"
+    if "حل" in text:
+        return "حل"
+    if "مثال" in text or "تمرين" in text:
+        return "أمثلة"
+    return "عام"
 
 # ==============================
-# SESSION + SPAM
+# QUIZ SESSION
 # ==============================
 
 sessions = {}
@@ -162,22 +141,19 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🚫 تم إيقافك مؤقتاً بسبب الإرسال المتكرر.")
         return
 
-    # اختيار الفرع
     if text in ["🔬 علمي", "📖 أدبي"]:
         branch = "علمي" if "علمي" in text else "أدبي"
         cursor.execute("INSERT OR IGNORE INTO users (user_id, branch) VALUES (?,?)", (user_id, branch))
         cursor.execute("UPDATE users SET branch=? WHERE user_id=?", (branch, user_id))
         conn.commit()
-
         await update.message.reply_text("✅ تم اختيار الفرع\nاكتب /quiz أو اطرح سؤالك.")
         return
 
-    # وضع الاختبار
     if user_id in sessions:
         session = sessions[user_id]
         q = session["questions"][session["index"]]
 
-        if check_answer(text, q["a"]):
+        if text.replace(" ", "") == q["a"].replace(" ", ""):
             session["score"] += 1
             await update.message.reply_text("✅ صحيح")
         else:
@@ -191,41 +167,45 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"{session['questions'][session['index']]['q']}"
             )
         else:
-            xp_gain = session["score"] * 10
-            cursor.execute("""
-            UPDATE users
-            SET xp = xp + ?,
-                total_quizzes = total_quizzes + 1,
-                correct_answers = correct_answers + ?
-            WHERE user_id=?
-            """, (xp_gain, session["score"], user_id))
-            conn.commit()
-
             await update.message.reply_text(f"🎉 انتهى الاختبار\nالنتيجة: {session['score']}/5")
             sessions.pop(user_id)
         return
 
     # ==============================
-    # AI MODE WITH AUTO FIX
+    # AI SMART TEACHER
     # ==============================
 
     cursor.execute("SELECT branch FROM users WHERE user_id=?", (user_id,))
     row = cursor.fetchone()
     branch = row[0] if row else "علمي"
 
+    mode = detect_mode(text)
+
     system_prompt = f"""
-أنت مدرس رياضيات عراقي متخصص بمنهج السادس الإعدادي - فرع {branch}.
+أنت مدرس رياضيات عراقي خبير بمنهج السادس الإعدادي - فرع {branch}.
 
 تعليمات صارمة:
 - اكتب بالعربية الفصحى فقط.
 - يمنع استخدام أي حرف لاتيني.
-- اشرح خطوة بخطوة.
+- لا تستخدم كلمات أجنبية.
 - استخدم ترقيم منظم.
-- لا تكتب مقدمة طويلة.
-- الحد الأقصى 200 كلمة.
+
+إذا كان الطلب شرح:
+- ابدأ بتعريف مختصر.
+- اشرح الفكرة.
+- أعط مثالاً محلولاً.
+
+إذا كان الطلب حل:
+- حل خطوة بخطوة.
+- اكتب النتيجة النهائية بوضوح.
+
+إذا كان الطلب أمثلة:
+- أعط 3 تمارين مع الحل.
+
+الحد الأقصى 350 كلمة.
 """
 
-    for _ in range(2):  # محاولة مرتين إذا ظهر خطأ لغوي
+    for _ in range(2):
         try:
             response = ai_client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
@@ -234,7 +214,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     {"role": "user", "content": text}
                 ],
                 temperature=0.2,
-                max_tokens=500
+                max_tokens=700
             )
 
             reply = response.choices[0].message.content
@@ -245,8 +225,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 reply = clean_text(reply)
 
-        except Exception as e:
-            print("AI ERROR:", e)
+        except Exception:
             await update.message.reply_text("⚠️ حدث خطأ في الاتصال.")
             return
 
