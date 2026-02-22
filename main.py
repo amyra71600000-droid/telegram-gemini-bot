@@ -202,7 +202,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # شرح ذكي
             try:
                 explanation = client.chat.completions.create(
-                    model="llama3-70b-8192",
+                    model="llama3-8b-8192"
                     messages=[
                         {"role":"system","content":"اشرح الحل بشكل مختصر وبسيط."},
                         {"role":"user","content":q["question"]}
@@ -247,7 +247,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ذكاء صناعي عام
     try:
         response = client.chat.completions.create(
-            model="llama3-70b-8192",
+            model="llama3-8b-8192"
             messages=[
                 {"role":"system","content":"أجب كمدرس رياضيات بشكل واضح."},
                 {"role":"user","content":text}
