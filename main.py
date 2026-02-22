@@ -7,7 +7,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# تفعيل Gemini
+# إنشاء عميل Gemini
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 # أمر /start
@@ -20,17 +20,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         response = client.models.generate_content(
-            model="gemini-1.0-pro",
+            model="models/gemini-1.5-flash",
             contents=user_message
         )
 
         if response.text:
             await update.message.reply_text(response.text)
         else:
-            await update.message.reply_text("لم يتم استلام رد من جيميني")
+            await update.message.reply_text("لم يتم استلام رد من Gemini")
 
     except Exception as e:
-        await update.message.reply_text(f"حصل خطأ:\n{e}")
+        await update.message.reply_text(f"حدث خطأ:\n{e}")
 
 # تشغيل البوت
 app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
@@ -38,5 +38,5 @@ app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-print("البوت يعمل...")
+print("Bot is running...")
 app.run_polling()
