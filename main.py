@@ -30,6 +30,31 @@ def solve_math(text):
 
 # 🌍 البحث في ويكيبيديا
 def search_wikipedia(query):
+    search_url = "https://ar.wikipedia.org/w/api.php"
+    
+    search_params = {
+        "action": "query",
+        "list": "search",
+        "srsearch": query,
+        "format": "json"
+    }
+
+    search_response = requests.get(search_url, params=search_params)
+    search_data = search_response.json()
+
+    if not search_data["query"]["search"]:
+        return None
+
+    first_title = search_data["query"]["search"][0]["title"]
+
+    summary_url = "https://ar.wikipedia.org/api/rest_v1/page/summary/" + first_title
+    summary_response = requests.get(summary_url)
+
+    if summary_response.status_code == 200:
+        summary_data = summary_response.json()
+        return summary_data.get("extract")
+
+    return None
     url = "https://ar.wikipedia.org/api/rest_v1/page/summary/" + query
     response = requests.get(url)
     if response.status_code == 200:
